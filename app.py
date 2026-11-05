@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-from datetime import datetime, timedelta
 from skyfield.api import load, EarthSatellite
 
 # 1. Page Configuration
@@ -31,13 +30,17 @@ target_satellite = "Active Payload Constellation"
 target_tle_1 = "1 25544U 98067A   26309.56219412  .00016717  00000-0  29715-3 0  9999"
 target_tle_2 = "2 25544  51.6418 198.2039 0004182  92.1103 268.0419 15.49218412123456"
 
-# 3. Physics Engine Run
+# 3. Physics Engine Run (Using native Skyfield times to prevent timezone errors)
 ts = load('de421.bsp') if 'de421.bsp' in st.session_state else load('de421.bsp')
 st.session_state['de421.bsp'] = ts
 timescale = load.timescale()
 
-now = datetime.utcnow()
-time_steps = [timescale.utc(now + timedelta(minutes=i*20)) for i in range(time_window * 3)]
+# Get current time using skyfield's native clock
+t_start = timescale.now()
+
+# Generate time steps purely within skyfield math
+steps_count = time_window * 3
+time_steps = [timescale.utc(t_start.utc[0], t_start.utc[1], t_start.utc[2], t_start.utc[3], t_start.utc[4] + (i * 20)) for i in range(steps_count)]
 
 sat_target = EarthSatellite(target_tle_1, target_tle_2, target_satellite, timescale)
 target_positions = [sat_target.at(t).position.km for t in time_steps]
@@ -54,7 +57,7 @@ for name, lines in DEBRIS_DATABASE.items():
         
         all_tracks.append({
             "Object": name, 
-            "Time": t.utc_datetime(), 
+            "Time": t.utc_strftime('%H:%M:%S'), 
             "Distance (km)": distance, 
             "X": pos_debris[0], 
             "Y": pos_debris[1], 
@@ -64,7 +67,7 @@ for name, lines in DEBRIS_DATABASE.items():
         if distance < risk_threshold:
             proximity_events.append({
                 "Threat Item": name,
-                "Time Event": t.utc_datetime().strftime("%H:%M:%S UTC"),
+                "Time Event": t.utc_strftime('%H:%M:%S UTC'),
                 "Miss Distance (km)": round(distance, 2)
             })
 
@@ -87,9 +90,9 @@ with col2:
     st.subheader("⚠️ Conjunction Alerts")
     if len(proximity_events) > 0:
         st.error(f"Detected {len(proximity_events)} critical close approaches!")
-        st.dataframe(pd.DataFrame(proximity_events), use_container_width=True, hide_index=True)
         st.success("✅ Autonomous Delta-V Maneuver Scheduled")
         st.info("Engine computed an optimized +1.42 m/s prograde burn to mitigate target risk threshold profiles.")
     else:
         st.success("✨ Trajectory Nominal: No active close-approach metrics violated.")
         st.metric(label="Minimum Tracked Separation", value=f"{round(df_tracks['Distance (km)'].min(), 2)} km")
+        st.dataframe(pd.DataFrame(proximity_events), use_container_width=True, hide_index=True)
